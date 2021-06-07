@@ -1,1 +1,8 @@
-- 
+- [] Get Data
+  - [] Yahoo
+    - [] Historical Data
+    - [] Quotes (including volume, beta, etc.)
+  - [] Barchart
+    - [] Bearish + Bullish Price Surprises
+- [] Serve Data
+  - [] Do some stuff with graphql or something?
