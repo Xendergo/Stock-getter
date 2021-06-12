@@ -4,6 +4,12 @@ interface NumRange {
     max: number
 }
 
+export interface HistoricalDataPoint {
+    min: number
+    max: number
+    time: number
+}
+
 interface BidAsk {
     price: number
     amt: number
@@ -14,11 +20,11 @@ interface ForwardDividendAndYield {
     percent: number
 }
 
-interface StockData {
+export interface StockData {
     currency: string | null
     price: number
-    changeSinceOpen: number | null
-    percentChange: number | null
+    changeSinceOpen: number
+    percentChange: number
     open: number
     close: number
     volume: number
@@ -32,13 +38,7 @@ interface StockData {
     peRatio: number | null
     eps: number | null
     earningsDate: NumRange | null
-    dividends: number | null
     forwardDividendAndYield: ForwardDividendAndYield | null
     exDividendDate: number | null
     oneYearTargetEst: number | null
-}
-
-export {
-    NumRange,
-    StockData
 }

@@ -1,22 +1,22 @@
 import { ApolloError } from 'apollo-server-express';
 import fetch from 'node-fetch';
-import { NumRange, StockData } from './interface';
+import { StockData, HistoricalDataPoint } from './interface';
 import { JSDOM } from 'jsdom';
 import { match } from 'ts-pattern';
 
-export async function getHistoricalDataFromYahoo(ticker: string, start: number, end: number, intervalEnum: string): Promise<NumRange[]> {
+export async function getHistoricalDataFromYahoo(ticker: string, start: number, end: number, intervalEnum: string): Promise<HistoricalDataPoint[]> {
     // string baseUrl = $"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}";
 
     const now = Date.now() / 1000;
 
     const range = match(start)
-        .when((value) => value < now - 86400, () => "1D")
-        .when((value) => value < now - 432000, () => "5D")
-        .when((value) => value < now - 2592000, () => "1MO")
-        .when((value) => value < now - 7776000, () => "3MO")
-        .when((value) => value < now - 31536000, () => "1Y")
-        .when((value) => value < now - 63072000, () => "2Y")
-        .when((value) => value < now - 157680000, () => "5Y")
+        .when((value) => value > now - 86400, () => "1D")
+        .when((value) => value > now - 432000, () => "5D")
+        .when((value) => value > now - 2592000, () => "1MO")
+        .when((value) => value > now - 7776000, () => "3MO")
+        .when((value) => value > now - 31536000, () => "1Y")
+        .when((value) => value > now - 63072000, () => "2Y")
+        .when((value) => value > now - 157680000, () => "5Y")
         .otherwise(() => "max")
 
     const interval = match(intervalEnum)
@@ -44,13 +44,12 @@ export async function getHistoricalDataFromYahoo(ticker: string, start: number, 
     }
 
     const result = res.result[0];
-    const data = result.meta;
     const quote = result.indicators.quote[0];
 
     const startIndex = result.timestamp.findIndex((v: number) => v >= start);
     let endIndex = result.timestamp.findIndex((v: number) => v >= end);
 
-    if (endIndex == 0) endIndex = result.timestamp.length - 1;
+    if (endIndex < 1) endIndex = result.timestamp.length - 1;
 
     const ret = [];
 
@@ -58,6 +57,7 @@ export async function getHistoricalDataFromYahoo(ticker: string, start: number, 
         ret.push({
             min: quote.low[i],
             max: quote.high[i],
+            time: result.timestamp[i]
         })
     }
 
@@ -69,175 +69,170 @@ export async function getStockDataFromYahoo(ticker: string): Promise<StockData> 
     const document = (new JSDOM(await (await fetch(baseUrl)).buffer())).window.document;
     const tables = document.querySelectorAll('table');
     const quoteHeader = document.querySelector('#quote-header-info');
-    const currency = quoteHeader.children[1].children[0].children[1].innerHTML.split(" ").pop();
-    console.log(quoteHeader);
+    const currencySplit = quoteHeader.children[1].children[0].children[1].textContent.split(" ");
+    const currency = currencySplit[currencySplit.length - 1];
+
+    const priceBox = quoteHeader?.children[2]?.children[0]?.children[0];
+    const price = parseFloat(priceBox.children[0].textContent ?? "-1");
+
+    const [changeSinceOpenString, percentChangeString] = priceBox.children[1].innerHTML.split(" ");
+    const changeSinceOpen = parseFloat(changeSinceOpenString);
+    const percentChange = parseFloat(percentChangeString.match(/(?<=\().+(?=%\))/g)[0]);
 
     const stock: StockData = {
-        currency
+        currency,
+        price,
+        changeSinceOpen,
+        percentChange,
     } as StockData;
 
     for (const table of tables) {
         for (const entry of table.children[0].children) {
-            const tableData: string = entry.children[0].textContent.trim().toLowerCase();
-
-            // switch (tableData) {
-            //     case "previous close":
-            //         break;
-            //     case "open":
-            //         break;
-            //     case "bid":
-            //         break;
-            //     case "ask":
-            //         break;
-            //     case "day's range"
-            //         
-            //     case "52 week range"
-            //     
-            //     default:
-            //         throw "wtf";
-            //         break;
-            // }
-
-            const content: string | null = entry.children[1].textContent.includes("N/A") ? null : entry.children[1].textContent.trim();
-
-            match(tableData)
-                .with("previous close", () => {
-                    if (content == null) throw new Error("Oof, close was null when it shouldn't have been")
-
-                    stock.close = parseFloat(content)
-                })
-                .with("open", () => {
-                    if (content == null) throw new Error("Oof, open was null when it shouldn't have been")
-
-                    stock.open = parseFloat(content)
-                })
-                .with("bid", () => {
-                    if (content == null) return;
-                    
-                    let [price, amt] = content.split(' x ').map(v => parseFloat(v));
-                    
-                    stock.bid = {
-                        price, amt
-                    }
-                })
-                .with("ask", () => {
-                    if (content == null) return;
-                    
-                    let [price, amt] = content.split(' x ').map(v => parseFloat(v));
-                    
-                    stock.ask = {
-                        price, amt
-                    }
-                })
-                .with("day's range", () => {
-                    if (content == null) {
-                        stock.dayRange = null;
-                        return;
-                    }
-
-                    let [min, max] = content.split(" - ").map((v: string) => parseFloat(v))
-                    stock.dayRange = {
-                        min,
-                        max
-                    }
-                })
-                .with("52 week range", () => {
-                    if (content == null) {
-                        stock.yearRange = null;
-                        return;
-                    }
-                    
-                    let [min, max] = content.split(" - ").map((v: string) => parseFloat(v))
-                    stock.yearRange = {
-                        min,
-                        max
-                    }
-                })
-                .with("volume", () => {
-                    if (content == null) throw new Error("Oof, volume was null when it shouldn't have been")
-
-                    stock.volume = parseInt(content.split("").filter(v => v == ",").join(""))
-                })
-                .with("avg. volume", () => {
-                    if (content == null) {
-                        stock.avgVolume = null;
-                        return;
-                    }
-
-                    stock.avgVolume = parseInt(content.split("").filter(v => v == ",").join(""))
-                })
-                .with("market cap", () => {
-                    if (content == null) {
-                        stock.marketCap = null;
-                        return;
-                    }
-
-                    const multiplier = match(content.slice(-1))
-                        .with("T", () => 1000000000000)
-                        .with("B", () => 1000000000)
-                        .with("M", () => 1000000)
-                        .otherwise(() => {
-                            throw new Error("The market cap of this is too small (if you get this error, please raise an issue with the stock ticker involoved)")
-                        });
-
-                    stock.marketCap = multiplier * parseFloat(content.slice(0, -1))
-                })
-                .with("beta (5y monthly)", () => {
-                    stock.beta = content == null ? null : parseFloat(content)
-                })
-                .with("pe ratio (ttm)", () => {
-                    stock.peRatio = content == null ? null : parseFloat(content)
-                })
-                .with("eps (ttm)", () => {
-                    stock.eps = content == null ? null : parseFloat(content)
-                })
-                .with("earnings date", () => {
-                    if (content == null) {
-                        stock.earningsDate = null;
-                        return;
-                    }
-
-                    let [min, max] = content.split(" - ").map(v => Date.parse(v));
-
-                    max = max ?? min // if it only gives one date, make the min and max the same
-
-                    stock.earningsDate = {
-                        min,
-                        max
-                    }
-                })
-                .with("forward dividend & yield", () => {
-                    if (content == null) {
-                        stock.forwardDividendAndYield = null;
-                        return;
-                    }
-
-                    let [amt, percent] = content.split(" ");
-
-                    stock.forwardDividendAndYield = {
-                        amt: parseFloat(amt),
-                        percent: parseFloat(percent.slice(1, -2))
-                    }
-                })
-                .with("ex-dividend date", () => {
-                    if (content == null) {
-                        stock.earningsDate = null;
-                        return;
-                    }
-
-                    stock.exDividendDate = Date.parse(content);
-                })
-                .with("1y target est", () => {
-                    stock.oneYearTargetEst = content == null ? null : parseFloat(content)
-                })
-                .otherwise(() => {
-                    "bruh"
-                })
-            console.log(entry.children[1].textContent);
+            parseData(entry.children[0].textContent, entry.children[1].textContent, stock);
         }
     }
-    // phony temp data
+    
     return stock;
+}
+
+function parseData(name: string, data: string, stock: StockData) {
+    
+    const tableData: string = name.trim().toLowerCase();
+    
+    const content: string | null = data.includes("N/A") ? null : data.trim();
+
+    match(tableData)
+        .with("previous close", () => {
+            if (content == null) throw new Error("Oof, close was null when it shouldn't have been")
+    
+            stock.close = parseFloat(content)
+        })
+        .with("open", () => {
+            if (content == null) throw new Error("Oof, open was null when it shouldn't have been")
+            stock.open = parseFloat(content);
+        })
+        .with("bid", () => {
+            if (content == null) return;
+            
+            let [price, amt] = content.split(' x ').map(v => parseFloat(v));
+            
+            stock.bid = {
+                price, amt
+            }
+        })
+        .with("ask", () => {
+            if (content == null) return;
+            
+            let [price, amt] = content.split(' x ').map(v => parseFloat(v));
+            
+            stock.ask = {
+                price, amt
+            }
+        })
+        .with("day's range", () => {
+            if (content == null) {
+                stock.dayRange = null;
+                return;
+            }
+    
+            let [min, max] = content.split(" - ").map((v: string) => parseFloat(v))
+            stock.dayRange = {
+                min,
+                max
+            }
+        })
+        .with("52 week range", () => {
+            if (content == null) {
+                stock.yearRange = null;
+                return;
+            }
+            
+            let [min, max] = content.split(" - ").map((v: string) => parseFloat(v))
+            stock.yearRange = {
+                min,
+                max
+            }
+        })
+        .with("volume", () => {
+            if (content == null) throw new Error("Oof, volume was null when it shouldn't have been")
+    
+            stock.volume = parseFloat(content.split("").filter(v => v !== ",").join(""))
+        })
+        .with("avg. volume", () => {
+            if (content == null) {
+                stock.avgVolume = null;
+                return;
+            }
+    
+            stock.avgVolume = parseFloat(content.split("").filter(v => v !== ",").join(""))
+        })
+        .with("market cap", () => {
+            if (content == null) {
+                stock.marketCap = null;
+                return;
+            }
+    
+            const multiplier = match(content.slice(-1))
+                .with("T", () => 1000000000000)
+                .with("B", () => 1000000000)
+                .with("M", () => 1000000)
+                .otherwise(() => {
+                    throw new Error("The market cap of this is too small (if you get this error, please raise an issue with the stock ticker involoved)")
+                });
+    
+            stock.marketCap = multiplier * parseFloat(content.slice(0, -1))
+        })
+        .with("beta (5y monthly)", () => {
+            stock.beta = content == null ? null : parseFloat(content)
+        })
+        .with("pe ratio (ttm)", () => {
+            stock.peRatio = content == null ? null : parseFloat(content)
+        })
+        .with("eps (ttm)", () => {
+            stock.eps = content == null ? null : parseFloat(content)
+        })
+        .with("earnings date", () => {
+            if (content == null) {
+                stock.earningsDate = null;
+                return;
+            }
+    
+            let [min, max] = content.split(" - ").map(v => Date.parse(v));
+    
+            max = max ?? min // if it only gives one date, make the min and max the same
+    
+            stock.earningsDate = {
+                min,
+                max
+            }
+        })
+        .with("forward dividend & yield", () => {
+            if (content == null) {
+                stock.forwardDividendAndYield = null;
+                return;
+            }
+    
+            let [amt, percent] = content.split(" ");
+    
+            stock.forwardDividendAndYield = {
+                amt: parseFloat(amt),
+                percent: parseFloat(percent.slice(1, -2))
+            }
+        })
+        .with("ex-dividend date", () => {
+            if (content == null) {
+                stock.earningsDate = null;
+                return;
+            }
+    
+            stock.exDividendDate = Date.parse(content);
+        })
+        .with("1y target est", () => {
+            stock.oneYearTargetEst = content == null ? null : parseFloat(content)
+        })
+        .otherwise(() => {
+            "bruh"
+        })
 }
 
 // Ima just leave this down here

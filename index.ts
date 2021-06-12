@@ -1,6 +1,7 @@
 import { ApolloServer, gql, IResolvers } from "apollo-server-express";
 import express from "express";
 import { getHistoricalDataFromYahoo, getStockDataFromYahoo } from "./yahoo";
+import { getPriceSurprises } from "./barchart"
 
 async function startApolloServer() {
     const app = express();
@@ -24,7 +25,7 @@ async function startApolloServer() {
             peRatio: Float
             eps: Float
             earningsDate: Float
-            dividends: Float
+            forwardDividendAndYield: ForwardDividendAndYield
             exDividendDate: Float
             oneYearTargetEst: Float
         }
@@ -34,9 +35,20 @@ async function startApolloServer() {
             max: Float!
         }
 
+        type HistoricalDataPoint {
+            min: Float!
+            max: Float!
+            time: Int!
+        }
+
         type BidAsk {
             price: Float!
             amt: Float!
+        }
+
+        type ForwardDividendAndYield {
+            amt: Float!
+            percent: Float!
         }
 
         enum Interval {
@@ -56,7 +68,8 @@ async function startApolloServer() {
 
         type Query {
             Stock(ticker: String!): Stock
-            HistoricalData(ticker: String!, start: Int!, end: Int!, interval: Interval!): [Range]
+            HistoricalData(ticker: String!, start: Int!, end: Int!, interval: Interval!): [HistoricalDataPoint!]
+            PriceSurprises: [String!]
         }
     `;
 
@@ -67,6 +80,9 @@ async function startApolloServer() {
             },
             HistoricalData(parent, args, context, info) {
                 return getHistoricalDataFromYahoo(args.ticker, args.start, args.end, args.interval)
+            },
+            PriceSurprises() {
+                return getPriceSurprises();
             }
         }
     };
